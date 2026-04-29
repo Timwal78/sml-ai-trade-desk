@@ -1,0 +1,17 @@
+{
+  "name": "sml-ai-trade-desk-render",
+  "version": "1.0.0",
+  "description": "TradingView to Discord AI Trade Desk webhook bridge",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.3",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
