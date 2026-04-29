@@ -164,7 +164,7 @@ async function getAiNote(payload) {
 }
  
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'SML AI Trade Desk v3 — SqueezeOS Institutional', time: new Date().toISOString() });
+  res.json({ ok: true, service: 'SML AI Trade Desk v3 — SqueezeOS Institutional', version: 3, time: new Date().toISOString(), keepalive: true });
 });
  
 // Connectivity test — NO fake signal data. Manifesto compliant.
