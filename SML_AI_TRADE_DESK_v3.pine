@@ -1,0 +1,680 @@
+//@version=6
+indicator("SML AI Trade Desk v3 — SqueezeOS Institutional", shorttitle="SML AI TRADE DESK", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=200)
+ 
+//==============================
+// MANIFESTO COMPLIANCE
+// Every metric is computed from LIVE market data via ta.*, request.security(),
+// and request.financial(). Zero hardcoded signals. Zero fake metrics.
+// Score weights are user-adjustable. Fundamental data is live when available.
+// Options intelligence is derived from real volatility and price math.
+//==============================
+ 
+//==============================
+// INPUTS — CORE
+//==============================
+groupCore = "Core"
+useConfirmedOnly = input.bool(true, "Confirm signals on bar close", group=groupCore)
+showSmartTable   = input.bool(true, "Show Institutional Desk Table", group=groupCore)
+showLabels       = input.bool(true, "Show Entry Labels", group=groupCore)
+showLevels       = input.bool(true, "Show ATR Stop/Targets", group=groupCore)
+allowBearOptions = input.bool(true, "Allow Bearish/Put Alerts", group=groupCore)
+showSqueezeBar   = input.bool(true, "Show Squeeze Dots", group=groupCore)
+showZBands       = input.bool(false, "Show Z-Score Bands", group=groupCore)
+ 
+groupFilters = "Optional Filters - OFF by default"
+useVolumeFilter   = input.bool(false, "Require Volume Expansion", group=groupFilters)
+useTrendFilter    = input.bool(false, "Require EMA Trend Alignment", group=groupFilters)
+useVwapFilter     = input.bool(false, "Require VWAP Alignment", group=groupFilters)
+useSqueezeFilter  = input.bool(false, "Require Squeeze Firing", group=groupFilters)
+useAdxFilter      = input.bool(false, "Require ADX Trend Strength", group=groupFilters)
+useFundFilter     = input.bool(false, "Require Fundamental Pass (stocks)", group=groupFilters)
+minScoreFilter    = input.int(0, "Minimum Score To Alert", minval=0, maxval=100, group=groupFilters)
+ 
+//==============================
+// INPUTS — TREND / MOMENTUM
+//==============================
+groupTrend = "Trend / Momentum"
+fastLen    = input.int(9, "Fast EMA", minval=1, group=groupTrend)
+midLen     = input.int(21, "Mid EMA", minval=1, group=groupTrend)
+slowLen    = input.int(50, "Slow EMA", minval=1, group=groupTrend)
+rsiLen     = input.int(14, "RSI Length", minval=1, group=groupTrend)
+macdFast   = input.int(12, "MACD Fast", minval=1, group=groupTrend)
+macdSlow   = input.int(26, "MACD Slow", minval=1, group=groupTrend)
+macdSignal = input.int(9, "MACD Signal", minval=1, group=groupTrend)
+adxLen     = input.int(14, "ADX Length", minval=5, group=groupTrend)
+adxThresh  = input.int(20, "ADX Trending Threshold", minval=10, maxval=50, group=groupTrend)
+ 
+//==============================
+// INPUTS — SQUEEZEOS
+//==============================
+groupSqueeze = "SqueezeOS — BB/KC Squeeze"
+sqzLen       = input.int(20, "Squeeze Length", minval=5, group=groupSqueeze)
+bbMult       = input.float(2.0, "BB Multiplier", minval=0.5, step=0.1, group=groupSqueeze)
+kcMultHigh   = input.float(1.5, "KC High Mult", minval=0.5, step=0.1, group=groupSqueeze)
+kcMultMid    = input.float(1.0, "KC Mid Mult", minval=0.1, step=0.1, group=groupSqueeze)
+kcMultLow    = input.float(0.5, "KC Low Mult", minval=0.1, step=0.1, group=groupSqueeze)
+useTrueRange = input.bool(true, "Use True Range for KC", group=groupSqueeze)
+ 
+//==============================
+// INPUTS — INSTITUTIONAL QUANT
+//==============================
+groupQuant = "Institutional Quant"
+zScoreLen    = input.int(50, "Z-Score Lookback", minval=10, group=groupQuant)
+zExtreme     = input.float(2.0, "Z-Score Extreme Threshold", minval=1.0, step=0.25, group=groupQuant)
+cmfLen       = input.int(20, "Chaikin Money Flow Length", minval=5, group=groupQuant)
+rVolLen      = input.int(20, "Realized Volatility Length", minval=5, group=groupQuant)
+benchTicker  = input.string("SPY", "Benchmark Ticker (Relative Strength)", group=groupQuant)
+corrLen      = input.int(20, "Correlation Length vs Benchmark", minval=5, group=groupQuant)
+volAnomalyZ  = input.float(2.0, "Volume Anomaly Z-Threshold", minval=1.0, step=0.25, group=groupQuant)
+ 
+//==============================
+// INPUTS — OPTIONS INTELLIGENCE
+//==============================
+groupOptions = "Options Intelligence"
+optDte       = input.int(14, "Default DTE for Options", minval=0, maxval=365, group=groupOptions)
+annFactor    = input.int(252, "Trading Days/Year", minval=200, maxval=365, group=groupOptions)
+ivRank_len   = input.int(252, "IV Rank Lookback (bars)", minval=50, group=groupOptions)
+strikeWidth  = input.float(0.5, "Strike Width (ATR multiplier)", minval=0.1, step=0.1, group=groupOptions)
+ 
+//==============================
+// INPUTS — FUNDAMENTALS (stocks only — returns na for crypto/forex)
+//==============================
+groupFund = "Fundamentals (Stocks Only)"
+minROE       = input.float(12.0, "Min ROE % (Buffett filter)", minval=0, step=1.0, group=groupFund)
+maxPE        = input.float(30.0, "Max P/E (Value filter)", minval=1, step=1.0, group=groupFund)
+minMargin    = input.float(10.0, "Min Net Margin %", minval=0, step=1.0, group=groupFund)
+ 
+//==============================
+// INPUTS — STRUCTURE / LIQUIDITY
+//==============================
+groupStructure = "Structure / Liquidity"
+pivotLeft     = input.int(3, "Pivot Left", minval=1, group=groupStructure)
+pivotRight    = input.int(3, "Pivot Right", minval=1, group=groupStructure)
+sweepLookback = input.int(20, "Sweep Lookback", minval=5, group=groupStructure)
+rangeLookback = input.int(30, "Range Lookback", minval=10, group=groupStructure)
+ 
+//==============================
+// INPUTS — RISK / TARGETS
+//==============================
+groupRisk = "Risk / Targets"
+atrLen   = input.int(14, "ATR Length", minval=1, group=groupRisk)
+atrMult  = input.float(1.5, "ATR Stop Multiplier", minval=0.1, step=0.1, group=groupRisk)
+targetR1 = input.float(1.0, "Target 1 R", minval=0.25, step=0.25, group=groupRisk)
+targetR2 = input.float(2.0, "Target 2 R", minval=0.25, step=0.25, group=groupRisk)
+targetR3 = input.float(3.0, "Target 3 R", minval=0.25, step=0.25, group=groupRisk)
+ 
+//==============================
+// INPUTS — SCORE WEIGHTS (user-tunable, no buried constants)
+//==============================
+groupWeights = "Score Weights"
+wTrend     = input.int(10, "Trend Stack", minval=0, maxval=20, group=groupWeights)
+wVwap      = input.int(6, "VWAP", minval=0, maxval=15, group=groupWeights)
+wMomentum  = input.int(8, "Momentum (RSI+MACD)", minval=0, maxval=20, group=groupWeights)
+wSweep     = input.int(8, "Sweep", minval=0, maxval=20, group=groupWeights)
+wBos       = input.int(10, "BOS", minval=0, maxval=20, group=groupWeights)
+wChoch     = input.int(4, "CHoCH", minval=0, maxval=15, group=groupWeights)
+wVolume    = input.int(6, "Volume Expansion", minval=0, maxval=15, group=groupWeights)
+wHtf       = input.int(6, "HTF Bias", minval=0, maxval=15, group=groupWeights)
+wSqueeze   = input.int(12, "Squeeze Fire", minval=0, maxval=20, group=groupWeights)
+wAdx       = input.int(6, "ADX Trend Quality", minval=0, maxval=15, group=groupWeights)
+wCmf       = input.int(6, "Institutional Flow (CMF)", minval=0, maxval=15, group=groupWeights)
+wZScore    = input.int(6, "Z-Score Mean Reversion", minval=0, maxval=15, group=groupWeights)
+wRelStr    = input.int(6, "Relative Strength", minval=0, maxval=15, group=groupWeights)
+wVolAnomaly = input.int(6, "Inst. Volume Anomaly", minval=0, maxval=15, group=groupWeights)
+ 
+//==============================
+// INPUTS — MTF
+//==============================
+groupMTF = "Non-Repainting MTF Bias"
+useMtf = input.bool(true, "Use HTF Bias In Score", group=groupMTF)
+htfTf  = input.timeframe("240", "Higher Timeframe", group=groupMTF)
+ 
+//==============================
+// INPUTS — JSON
+//==============================
+groupJson = "Discord / Render JSON"
+secret       = input.string("SML_TRADEDESK_2026", "Webhook Secret", group=groupJson)
+systemName   = input.string("SML AI Trade Desk v3 — SqueezeOS Institutional", "System Name", group=groupJson)
+alertOnBull    = input.bool(true, "Alert Bullish Setups", group=groupJson)
+alertOnBear    = input.bool(true, "Alert Bearish/Put Setups", group=groupJson)
+alertOnSweep   = input.bool(true, "Alert Sweeps", group=groupJson)
+alertOnBOS     = input.bool(true, "Alert BOS/CHoCH", group=groupJson)
+alertOnSqzFire = input.bool(true, "Alert Squeeze Fires", group=groupJson)
+ 
+//==============================
+// HELPERS
+//==============================
+f_boolText(bool x) => x ? "YES" : "NO"
+f_sideText(int x)  => x > 0 ? "LONG" : x < 0 ? "PUTS" : "NEUTRAL"
+f_grade(int s)      => s >= 90 ? "A+" : s >= 80 ? "A" : s >= 70 ? "B" : s >= 60 ? "C" : s >= 50 ? "WATCH" : "AVOID"
+f_regime(bool bull, bool bear) => bull ? "BULL" : bear ? "BEAR" : "CHOP"
+f_jsonStr(string x) => str.replace_all(str.replace_all(x, "\\", ""), '"', "'")
+f_num(float x)      => str.tostring(x, format.mintick)
+f_pct(float x)      => str.tostring(x, "#.##") + "%"
+f_dec(float x)      => str.tostring(x, "#.####")
+f_int(int x)        => str.tostring(x)
+f_naStr(float x, string fmt) => na(x) ? "n/a" : str.tostring(x, fmt)
+ 
+f_tableColor(string state) =>
+    state == "BULL" or state == "LONG" or state == "A+" or state == "A" ? color.new(#00ff08, 0) : state == "BEAR" or state == "PUTS" ? color.new(#ff0000, 0) : state == "AVOID" ? color.new(color.gray, 20) : color.new(#ff9900, 0)
+ 
+//==============================
+// 1. CORE SERIES — live ta.* on real market data
+//==============================
+emaFast = ta.ema(close, fastLen)
+emaMid  = ta.ema(close, midLen)
+emaSlow = ta.ema(close, slowLen)
+rsiVal  = ta.rsi(close, rsiLen)
+[macdLine, macdSig, macdHist] = ta.macd(close, macdFast, macdSlow, macdSignal)
+atrVal  = ta.atr(atrLen)
+vwapVal = ta.vwap(hlc3)
+volSma  = ta.sma(volume, 20)
+volRatio = volSma > 0 ? volume / volSma : 0.0
+volExpand = volRatio >= 1.5
+ 
+//==============================
+// 2. ADX — Institutional Trend Quality (Wilder's method)
+// Institutions don't trade trendless markets. ADX tells you if a trend is real.
+//==============================
+[diPlus, diMinus, adxVal] = ta.dmi(adxLen, adxLen)
+trendStrong = adxVal >= adxThresh
+trendBullDI = diPlus > diMinus
+trendBearDI = diMinus > diPlus
+ 
+//==============================
+// 3. SQUEEZEOS — BB vs KC Squeeze (live volatility math)
+//==============================
+sqzBasis = ta.sma(close, sqzLen)
+sqzDev   = bbMult * ta.stdev(close, sqzLen)
+bbUpper  = sqzBasis + sqzDev
+bbLower  = sqzBasis - sqzDev
+ 
+kcRange     = useTrueRange ? ta.tr : high - low
+kcMa        = ta.sma(kcRange, sqzLen)
+kcUpperHigh = sqzBasis + kcMa * kcMultHigh
+kcLowerHigh = sqzBasis - kcMa * kcMultHigh
+kcUpperMid  = sqzBasis + kcMa * kcMultMid
+kcLowerMid  = sqzBasis - kcMa * kcMultMid
+kcUpperLow  = sqzBasis + kcMa * kcMultLow
+kcLowerLow  = sqzBasis - kcMa * kcMultLow
+ 
+sqzOnHigh = bbLower > kcLowerHigh and bbUpper < kcUpperHigh
+sqzOnMid  = bbLower > kcLowerMid  and bbUpper < kcUpperMid
+sqzOnLow  = bbLower > kcLowerLow  and bbUpper < kcUpperLow
+sqzOff    = not sqzOnLow
+ 
+sqzFired = sqzOnLow[1] and sqzOff
+ 
+// TTM Squeeze momentum — correct institutional formula:
+// Donchian midline = (highest high + lowest low) / 2
+// Combined midline = (Donchian midline + SMA basis) / 2
+// Momentum = linear regression of (close - combined midline)
+donchianMid = (ta.highest(high, sqzLen) + ta.lowest(low, sqzLen)) / 2.0
+sqzMidline  = (donchianMid + sqzBasis) / 2.0
+sqzMom      = ta.linreg(close - sqzMidline, sqzLen, 0)
+ 
+sqzMomUp      = sqzMom > 0
+sqzMomRising  = sqzMom > sqzMom[1]
+sqzMomFalling = sqzMom < sqzMom[1]
+ 
+sqzStateStr = sqzOnHigh ? "SQUEEZE_HIGH" : sqzOnMid ? "SQUEEZE_MID" : sqzOnLow ? "SQUEEZE_LOW" : "NO_SQUEEZE"
+sqzMomStr   = sqzMomUp and sqzMomRising ? "BULL_ACCEL" : sqzMomUp and sqzMomFalling ? "BULL_DECEL" : not sqzMomUp and sqzMomFalling ? "BEAR_ACCEL" : "BEAR_DECEL"
+ 
+//==============================
+// 4. Z-SCORE ENGINE — Citadel-style statistical distance
+// How many standard deviations price is from its mean.
+// Quant funds use this for mean-reversion and overextension detection.
+//==============================
+zMean   = ta.sma(close, zScoreLen)
+zStdev  = ta.stdev(close, zScoreLen)
+zScore  = zStdev > 0 ? (close - zMean) / zStdev : 0.0
+ 
+// Z-Score bands for visual
+zUpper2 = zMean + zStdev * 2
+zLower2 = zMean - zStdev * 2
+zUpper1 = zMean + zStdev
+zLower1 = zMean - zStdev
+ 
+// Overextended = potential reversal. Z < -2 = deeply oversold statistically.
+zBullish  = zScore < -zExtreme  // statistically oversold — buy zone for mean reversion
+zBearish  = zScore > zExtreme   // statistically overbought — risk zone
+ 
+//==============================
+// 5. CHAIKIN MONEY FLOW — Institutional Accumulation/Distribution
+// CMF > 0 = institutions accumulating. CMF < 0 = distributing.
+// This is what smart money does — they don't chase, they load quietly.
+//==============================
+cmfMult = ((close - low) - (high - close)) / math.max(high - low, syminfo.mintick)
+cmfVol  = cmfMult * volume
+cmfVal  = ta.sma(cmfVol, cmfLen) / math.max(ta.sma(volume, cmfLen), 1)
+cmfBull = cmfVal > 0.05
+cmfBear = cmfVal < -0.05
+ 
+//==============================
+// 6. VOLUME DELTA PROXY — Buying vs Selling Pressure
+// Approximates order flow from bar position. Not perfect without L2 data,
+// but institutional-standard proxy used by most quant desks.
+//==============================
+barRange  = math.max(high - low, syminfo.mintick)
+buyPct    = (close - low) / barRange
+sellPct   = (high - close) / barRange
+buyVol    = volume * buyPct
+sellVol   = volume * sellPct
+deltaPct  = (buyVol - sellVol) / math.max(volume, 1) * 100
+ 
+//==============================
+// 7. INSTITUTIONAL VOLUME ANOMALY — Z-Score of Volume
+// Unusual volume = someone big is moving. Citadel, Virtu, Two Sigma —
+// they leave footprints in volume even when they try to hide.
+//==============================
+volMean   = ta.sma(volume, zScoreLen)
+volStdev  = ta.stdev(volume, zScoreLen)
+volZScore = volStdev > 0 ? (volume - volMean) / volStdev : 0.0
+volAnomaly = volZScore >= volAnomalyZ
+ 
+//==============================
+// 8. REALIZED VOLATILITY — Annualized (institutional standard)
+// This is what options desks use to price contracts.
+//==============================
+logReturn = close[1] > 0 ? math.log(close / close[1]) : 0.0
+rVolRaw   = ta.stdev(logReturn, rVolLen)
+rVol      = na(rVolRaw) ? 0.0 : rVolRaw * math.sqrt(annFactor) * 100
+ 
+// IV Rank proxy — where is current realized vol vs its range over the lookback?
+// Real IV needs options chain data, but realized vol rank is a solid proxy.
+rVolHigh = ta.highest(rVol, ivRank_len)
+rVolLow  = ta.lowest(rVol, ivRank_len)
+ivRankProxy = rVolHigh != rVolLow ? (rVol - rVolLow) / (rVolHigh - rVolLow) * 100 : 50.0
+ 
+//==============================
+// 9. RELATIVE STRENGTH vs BENCHMARK — Are you beating the market?
+// Buffett: own great businesses. Griffin: find alpha. Both need RS.
+//==============================
+benchClose = request.security(benchTicker, timeframe.period, close, barmerge.gaps_off, barmerge.lookahead_off, ignore_invalid_symbol=true)
+rsRatio    = benchClose > 0 ? close / benchClose : na
+rsMA       = ta.sma(rsRatio, midLen)
+rsBull     = not na(rsRatio) and rsRatio > rsMA   // outperforming benchmark
+rsBear     = not na(rsRatio) and rsRatio < rsMA   // underperforming
+ 
+// Correlation to benchmark — guarded against na
+corrRaw = ta.correlation(close, benchClose, corrLen)
+corrVal = na(corrRaw) ? 0.0 : corrRaw
+ 
+//==============================
+// 10. OPTIONS INTELLIGENCE — derived from real volatility math
+// No options chain needed — we derive actionable options intel from
+// realized vol, ATR, and statistical math.
+//==============================
+// Implied move estimate for DTE period
+// Formula: price * rVol/100 * sqrt(DTE/annFactor)
+dteFraction    = optDte / annFactor
+impliedMove    = rVol > 0 ? close * (rVol / 100.0) * math.sqrt(dteFraction) : 0.0
+impliedMovePct = close > 0 ? impliedMove / close * 100 : 0.0
+ 
+// Expected range by expiry
+optUpperExp = close + impliedMove
+optLowerExp = close - impliedMove
+ 
+// Suggested strikes based on ATR and direction
+optAtmStrike    = math.round(close / syminfo.mintick) * syminfo.mintick
+optOtmCallStrike = close + atrVal * strikeWidth
+optOtmPutStrike  = close - atrVal * strikeWidth
+ 
+// Theta decay factor — time value drops faster as DTE decreases
+// Sqrt rule: option loses ~1/sqrt(DTE) of value per day
+thetaDecayDaily = impliedMove / math.sqrt(math.max(optDte, 1))
+ 
+// IV Rank regime for options strategy selection
+// High IV Rank = sell premium (iron condors, credit spreads)
+// Low IV Rank = buy premium (long calls/puts, debit spreads)
+ivRegime = ivRankProxy >= 70 ? "HIGH_IV_SELL_PREMIUM" : ivRankProxy >= 40 ? "MID_IV_DIRECTIONAL" : "LOW_IV_BUY_PREMIUM"
+ 
+// Options action recommendation
+optAction = ivRankProxy >= 70 and not trendStrong ? "SELL_PREMIUM" : ivRankProxy >= 70 and trendStrong ? "CREDIT_SPREAD_WITH_TREND" : ivRankProxy < 40 and sqzFired ? "BUY_DEBIT_SQZ_BREAKOUT" : ivRankProxy < 40 and trendStrong ? "BUY_DIRECTIONAL" : "WAIT_FOR_SETUP"
+ 
+//==============================
+// 11. FUNDAMENTALS — Live from TradingView (stocks only, na for crypto/forex)
+// Buffett: "Price is what you pay. Value is what you get."
+//==============================
+fundEPS    = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE_BASIC", "FQ", ignore_invalid_symbol=true)
+fundPE     = request.financial(syminfo.tickerid, "PRICE_EARNINGS_TTOM", "FQ", ignore_invalid_symbol=true)
+fundROE    = request.financial(syminfo.tickerid, "RETURN_ON_EQUITY", "FQ", ignore_invalid_symbol=true)
+fundMargin = request.financial(syminfo.tickerid, "NET_PROFIT_MARGIN", "FQ", ignore_invalid_symbol=true)
+fundRevGr  = request.financial(syminfo.tickerid, "REVENUE_ONE_YEAR_GROWTH", "FQ", ignore_invalid_symbol=true)
+ 
+hasFundamentals = not na(fundEPS)
+fundPass = hasFundamentals and (na(fundROE) or fundROE >= minROE) and (na(fundPE) or (fundPE > 0 and fundPE <= maxPE)) and (na(fundMargin) or fundMargin >= minMargin)
+fundGrade = not hasFundamentals ? "N/A" : fundPass ? "PASS" : "FAIL"
+ 
+//==============================
+// 12. STRUCTURE / LIQUIDITY — Smart Money Concepts (live pivots)
+//==============================
+pivotHigh = ta.pivothigh(high, pivotLeft, pivotRight)
+pivotLow  = ta.pivotlow(low, pivotLeft, pivotRight)
+lastPH    = ta.valuewhen(not na(pivotHigh), pivotHigh, 0)
+lastPL    = ta.valuewhen(not na(pivotLow), pivotLow, 0)
+prevPH    = ta.valuewhen(not na(pivotHigh), pivotHigh, 1)
+prevPL    = ta.valuewhen(not na(pivotLow), pivotLow, 1)
+ 
+priorLow  = ta.lowest(low[1], sweepLookback)
+priorHigh = ta.highest(high[1], sweepLookback)
+ 
+sweepLow  = low < priorLow and close > priorLow
+sweepHigh = high > priorHigh and close < priorHigh
+bosUp     = not na(lastPH) and close > lastPH and close[1] <= lastPH
+bosDown   = not na(lastPL) and close < lastPL and close[1] >= lastPL
+chochUp   = bosUp and not na(prevPL) and lastPL > prevPL
+chochDown = bosDown and not na(prevPH) and lastPH < prevPH
+ 
+bullTrend    = emaFast > emaMid and emaMid > emaSlow
+bearTrend    = emaFast < emaMid and emaMid < emaSlow
+aboveVwap    = close > vwapVal
+belowVwap    = close < vwapVal
+bullMomentum = rsiVal > 50 and macdHist > 0
+bearMomentum = rsiVal < 50 and macdHist < 0
+ 
+// HTF — non-repainting
+htfClose = request.security(syminfo.tickerid, htfTf, close[1], barmerge.gaps_off, barmerge.lookahead_off)
+htfFast  = request.security(syminfo.tickerid, htfTf, ta.ema(close, fastLen)[1], barmerge.gaps_off, barmerge.lookahead_off)
+htfMid   = request.security(syminfo.tickerid, htfTf, ta.ema(close, midLen)[1], barmerge.gaps_off, barmerge.lookahead_off)
+htfSlow  = request.security(syminfo.tickerid, htfTf, ta.ema(close, slowLen)[1], barmerge.gaps_off, barmerge.lookahead_off)
+htfBull  = htfFast > htfMid and htfMid > htfSlow and htfClose > htfMid
+htfBear  = htfFast < htfMid and htfMid < htfSlow and htfClose < htfMid
+ 
+confirmed = useConfirmedOnly ? barstate.isconfirmed : true
+ 
+//==============================
+// 13. COMPOSITE SCORE ENGINE — institutional multi-factor
+//==============================
+bullScoreRaw = 0
+bullScoreRaw += bullTrend                          ? wTrend     : 0
+bullScoreRaw += aboveVwap                          ? wVwap      : 0
+bullScoreRaw += bullMomentum                       ? wMomentum  : 0
+bullScoreRaw += sweepLow                           ? wSweep     : 0
+bullScoreRaw += bosUp                              ? wBos       : 0
+bullScoreRaw += chochUp                            ? wChoch     : 0
+bullScoreRaw += volExpand                          ? wVolume    : 0
+bullScoreRaw += useMtf and htfBull                 ? wHtf       : 0
+bullScoreRaw += sqzFired and sqzMomUp              ? wSqueeze   : 0
+bullScoreRaw += trendStrong and trendBullDI         ? wAdx       : 0
+bullScoreRaw += cmfBull                            ? wCmf       : 0
+bullScoreRaw += zBullish                           ? wZScore    : 0  // oversold z = bullish
+bullScoreRaw += rsBull                             ? wRelStr    : 0
+bullScoreRaw += volAnomaly and deltaPct > 20       ? wVolAnomaly : 0
+bullScore = math.min(bullScoreRaw, 100)
+ 
+bearScoreRaw = 0
+bearScoreRaw += bearTrend                          ? wTrend     : 0
+bearScoreRaw += belowVwap                          ? wVwap      : 0
+bearScoreRaw += bearMomentum                       ? wMomentum  : 0
+bearScoreRaw += sweepHigh                          ? wSweep     : 0
+bearScoreRaw += bosDown                            ? wBos       : 0
+bearScoreRaw += chochDown                          ? wChoch     : 0
+bearScoreRaw += volExpand                          ? wVolume    : 0
+bearScoreRaw += useMtf and htfBear                 ? wHtf       : 0
+bearScoreRaw += sqzFired and not sqzMomUp          ? wSqueeze   : 0
+bearScoreRaw += trendStrong and trendBearDI         ? wAdx       : 0
+bearScoreRaw += cmfBear                            ? wCmf       : 0
+bearScoreRaw += zBearish                           ? wZScore    : 0  // overbought z = bearish
+bearScoreRaw += rsBear                             ? wRelStr    : 0
+bearScoreRaw += volAnomaly and deltaPct < -20      ? wVolAnomaly : 0
+bearScore = math.min(bearScoreRaw, 100)
+ 
+side        = bullScore > bearScore ? 1 : bearScore > bullScore ? -1 : 0
+activeScore = side > 0 ? bullScore : side < 0 ? bearScore : math.max(bullScore, bearScore)
+activeGrade = f_grade(activeScore)
+activeBias  = f_sideText(side)
+regime      = f_regime(bullTrend and aboveVwap, bearTrend and belowVwap)
+ 
+//==============================
+// 14. RISK MANAGEMENT — ATR-based, live
+//==============================
+longEntry = close
+longStop  = close - atrVal * atrMult
+longRisk  = math.max(longEntry - longStop, syminfo.mintick)
+longT1    = longEntry + longRisk * targetR1
+longT2    = longEntry + longRisk * targetR2
+longT3    = longEntry + longRisk * targetR3
+ 
+bearEntry = close
+bearStop  = close + atrVal * atrMult
+bearRisk  = math.max(bearStop - bearEntry, syminfo.mintick)
+bearT1    = bearEntry - bearRisk * targetR1
+bearT2    = bearEntry - bearRisk * targetR2
+bearT3    = bearEntry - bearRisk * targetR3
+ 
+entry = side > 0 ? longEntry : bearEntry
+stop  = side > 0 ? longStop  : bearStop
+t1    = side > 0 ? longT1 : bearT1
+t2    = side > 0 ? longT2 : bearT2
+t3    = side > 0 ? longT3 : bearT3
+rr    = targetR2
+ 
+//==============================
+// 15. SIGNAL LOGIC
+//==============================
+optionalLongPass = (not useVolumeFilter or volExpand) and (not useTrendFilter or bullTrend) and (not useVwapFilter or aboveVwap) and (not useSqueezeFilter or (sqzFired and sqzMomUp)) and (not useAdxFilter or (trendStrong and trendBullDI)) and (not useFundFilter or fundPass or not hasFundamentals) and bullScore >= minScoreFilter
+optionalBearPass = (not useVolumeFilter or volExpand) and (not useTrendFilter or bearTrend) and (not useVwapFilter or belowVwap) and (not useSqueezeFilter or (sqzFired and not sqzMomUp)) and (not useAdxFilter or (trendStrong and trendBearDI)) and (not useFundFilter or not hasFundamentals) and bearScore >= minScoreFilter
+ 
+bullSetup  = confirmed and alertOnBull and optionalLongPass and side > 0 and activeScore >= minScoreFilter and (bosUp or sweepLow or chochUp or bullScore >= 70 or (sqzFired and sqzMomUp))
+bearSetup  = confirmed and allowBearOptions and alertOnBear and optionalBearPass and side < 0 and activeScore >= minScoreFilter and (bosDown or sweepHigh or chochDown or bearScore >= 70 or (sqzFired and not sqzMomUp))
+sweepAlert = confirmed and alertOnSweep and (sweepLow or sweepHigh)
+bosAlert   = confirmed and alertOnBOS and (bosUp or bosDown or chochUp or chochDown)
+sqzAlert   = confirmed and alertOnSqzFire and sqzFired
+ 
+// Reason builder
+reasonLong = (sqzFired and sqzMomUp ? "SQZ FIRED BULL. " : sqzOnHigh ? "Tight squeeze. " : "") + (sweepLow ? "Sweep reclaim. " : "") + (bosUp ? "BOS up. " : "") + (chochUp ? "CHoCH up. " : "") + (aboveVwap ? "VWAP+. " : "") + (volExpand ? "Vol expand. " : "") + (trendStrong and trendBullDI ? "ADX strong bull. " : "") + (cmfBull ? "Inst. accum. " : "") + (volAnomaly ? "Vol anomaly. " : "") + (rsBull ? "RS > bench. " : "") + (zBullish ? "Z oversold. " : "") + (fundPass ? "Fundamentals pass. " : "")
+reasonBear = (sqzFired and not sqzMomUp ? "SQZ FIRED BEAR. " : sqzOnHigh ? "Tight squeeze. " : "") + (sweepHigh ? "Sweep reject. " : "") + (bosDown ? "BOS down. " : "") + (chochDown ? "CHoCH down. " : "") + (belowVwap ? "VWAP-. " : "") + (volExpand ? "Vol expand. " : "") + (trendStrong and trendBearDI ? "ADX strong bear. " : "") + (cmfBear ? "Inst. distrib. " : "") + (volAnomaly ? "Vol anomaly. " : "") + (rsBear ? "RS < bench. " : "") + (zBearish ? "Z overbought. " : "") + (hasFundamentals and not fundPass ? "Fundamentals fail. " : "")
+activeReason = side > 0 ? reasonLong : side < 0 ? reasonBear : "Neutral/chop."
+ 
+alertType = bullSetup ? "BULLISH_BREAKOUT" : bearSetup ? "BEARISH_BREAKDOWN" : sqzAlert ? (sqzMomUp ? "SQUEEZE_FIRE_BULL" : "SQUEEZE_FIRE_BEAR") : sweepAlert ? (sweepLow ? "LIQ_SWEEP_LOW" : "LIQ_SWEEP_HIGH") : bosAlert ? (bosUp ? "BOS_UP" : bosDown ? "BOS_DOWN" : chochUp ? "CHOCH_UP" : "CHOCH_DOWN") : "INFO"
+action = activeScore >= 80 ? (side > 0 ? "WATCH_LONG" : side < 0 ? "WATCH_PUTS" : "WAIT") : activeScore >= 65 ? "WATCH_ONLY" : "AVOID"
+ 
+//==============================
+// 16. JSON ALERT — all live values, institutional depth
+//==============================
+json = "{" +
+     '"secret":"'              + f_jsonStr(secret) + '",' +
+     '"source":"'              + f_jsonStr(systemName) + '",' +
+     '"ticker":"'              + syminfo.ticker + '",' +
+     '"exchange":"'            + syminfo.prefix + '",' +
+     '"timeframe":"'           + timeframe.period + '",' +
+     '"price":'                + f_num(close) + ',' +
+     '"alert_type":"'          + alertType + '",' +
+     '"bias":"'                + activeBias + '",' +
+     '"score":'                + f_int(activeScore) + ',' +
+     '"grade":"'               + activeGrade + '",' +
+     '"regime":"'              + regime + '",' +
+     '"entry":'                + f_num(entry) + ',' +
+     '"stop":'                 + f_num(stop) + ',' +
+     '"target_1":'             + f_num(t1) + ',' +
+     '"target_2":'             + f_num(t2) + ',' +
+     '"target_3":'             + f_num(t3) + ',' +
+     '"rr":'                   + str.tostring(rr) + ',' +
+     '"volume_ratio":'         + str.tostring(volRatio, "#.##") + ',' +
+     '"squeeze_state":"'       + sqzStateStr + '",' +
+     '"squeeze_momentum":"'    + sqzMomStr + '",' +
+     '"squeeze_mom_val":'      + f_dec(sqzMom) + ',' +
+     '"squeeze_fired":"'       + f_boolText(sqzFired) + '",' +
+     '"adx":'                  + str.tostring(adxVal, "#.##") + ',' +
+     '"adx_trend":"'           + (trendStrong ? (trendBullDI ? "STRONG_BULL" : "STRONG_BEAR") : "WEAK") + '",' +
+     '"z_score":'              + str.tostring(zScore, "#.##") + ',' +
+     '"cmf":'                  + str.tostring(cmfVal, "#.####") + ',' +
+     '"vol_delta_pct":'        + str.tostring(deltaPct, "#.##") + ',' +
+     '"vol_z_score":'          + str.tostring(volZScore, "#.##") + ',' +
+     '"vol_anomaly":"'         + f_boolText(volAnomaly) + '",' +
+     '"realized_vol":'         + str.tostring(rVol, "#.##") + ',' +
+     '"iv_rank_proxy":'        + str.tostring(ivRankProxy, "#.##") + ',' +
+     '"iv_regime":"'           + ivRegime + '",' +
+     '"implied_move":'         + f_num(impliedMove) + ',' +
+     '"implied_move_pct":'     + str.tostring(impliedMovePct, "#.##") + ',' +
+     '"opt_upper_exp":'        + f_num(optUpperExp) + ',' +
+     '"opt_lower_exp":'        + f_num(optLowerExp) + ',' +
+     '"opt_atm_strike":'       + f_num(optAtmStrike) + ',' +
+     '"opt_otm_call":'         + f_num(optOtmCallStrike) + ',' +
+     '"opt_otm_put":'          + f_num(optOtmPutStrike) + ',' +
+     '"opt_action":"'          + optAction + '",' +
+     '"theta_decay_daily":'    + f_num(thetaDecayDaily) + ',' +
+     '"rel_strength_bull":"'   + f_boolText(rsBull) + '",' +
+     '"correlation_bench":'    + str.tostring(corrVal, "#.##") + ',' +
+     '"rsi":'                  + str.tostring(rsiVal, "#.##") + ',' +
+     '"macd_hist":'            + f_dec(macdHist) + ',' +
+     '"atr":'                  + f_num(atrVal) + ',' +
+     '"fund_eps":'             + f_naStr(fundEPS, "#.##") + ',' +
+     '"fund_pe":'              + f_naStr(fundPE, "#.##") + ',' +
+     '"fund_roe":'             + f_naStr(fundROE, "#.##") + ',' +
+     '"fund_margin":'          + f_naStr(fundMargin, "#.##") + ',' +
+     '"fund_rev_growth":'      + f_naStr(fundRevGr, "#.##") + ',' +
+     '"fund_grade":"'          + fundGrade + '",' +
+     '"action":"'              + action + '",' +
+     '"reason":"'              + f_jsonStr(activeReason) + '"' +
+     "}"
+ 
+shouldAlert = bullSetup or bearSetup or sweepAlert or bosAlert or sqzAlert
+if shouldAlert
+    alert(json, alert.freq_once_per_bar_close)
+ 
+alertcondition(bullSetup, title="SML Bullish Setup", message="Bullish setup. Use Any alert() for full JSON.")
+alertcondition(bearSetup, title="SML Bearish/Put Setup", message="Bearish setup. Use Any alert() for full JSON.")
+alertcondition(sweepAlert, title="SML Liquidity Sweep", message="Liquidity sweep. Use Any alert() for full JSON.")
+alertcondition(bosAlert, title="SML BOS/CHoCH", message="BOS/CHoCH. Use Any alert() for full JSON.")
+alertcondition(sqzAlert, title="SML Squeeze Fire", message="Squeeze fired! Use Any alert() for full JSON.")
+ 
+//==============================
+// 17. PLOTS
+//==============================
+plot(emaFast, "EMA Fast", color=color.new(#ffffff, 0))
+plot(emaMid, "EMA Mid", color=color.new(#0004ff, 0))
+plot(emaSlow, "EMA Slow", color=color.new(#ff0000, 0))
+plot(vwapVal, "VWAP", color=color.new(#fffb00, 0), linewidth=2)
+ 
+// Z-Score bands
+plot(showZBands ? zUpper2 : na, "Z +2σ", color=color.new(color.purple, 60), style=plot.style_linebr)
+plot(showZBands ? zLower2 : na, "Z -2σ", color=color.new(color.purple, 60), style=plot.style_linebr)
+plot(showZBands ? zUpper1 : na, "Z +1σ", color=color.new(color.purple, 80), style=plot.style_linebr)
+plot(showZBands ? zLower1 : na, "Z -1σ", color=color.new(color.purple, 80), style=plot.style_linebr)
+ 
+// Stop/Target levels
+plot(showLevels and side > 0 ? longStop : na, "Long Stop", color=color.new(color.red, 0), style=plot.style_linebr)
+plot(showLevels and side > 0 ? longT1 : na, "Long T1", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(showLevels and side > 0 ? longT2 : na, "Long T2", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(showLevels and side > 0 ? longT3 : na, "Long T3", color=color.new(color.green, 0), style=plot.style_linebr)
+plot(showLevels and side < 0 ? bearStop : na, "Put Stop", color=color.new(color.red, 0), style=plot.style_linebr)
+plot(showLevels and side < 0 ? bearT1 : na, "Put T1", color=color.new(color.purple, 0), style=plot.style_linebr)
+plot(showLevels and side < 0 ? bearT2 : na, "Put T2", color=color.new(color.purple, 0), style=plot.style_linebr)
+plot(showLevels and side < 0 ? bearT3 : na, "Put T3", color=color.new(color.purple, 0), style=plot.style_linebr)
+ 
+// Options expected range bands
+plot(showLevels ? optUpperExp : na, "Options Upper Exp", color=color.new(color.teal, 0), style=plot.style_linebr, linewidth=2)
+plot(showLevels ? optLowerExp : na, "Options Lower Exp", color=color.new(color.teal, 0), style=plot.style_linebr, linewidth=2)
+ 
+// Signal labels
+plotshape(showLabels and sqzFired and sqzMomUp, title="Sqz Fire Bull", style=shape.diamond, location=location.belowbar, text="SQZ", color=color.new(color.lime, 0), textcolor=color.white, size=size.tiny)
+plotshape(showLabels and sqzFired and not sqzMomUp, title="Sqz Fire Bear", style=shape.diamond, location=location.abovebar, text="SQZ", color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+plotshape(showLabels and sweepLow, title="Sweep Low", style=shape.triangleup, location=location.belowbar, text="SWP", color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
+plotshape(showLabels and sweepHigh, title="Sweep High", style=shape.triangledown, location=location.abovebar, text="SWP", color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+plotshape(showLabels and bosUp, title="BOS Up", style=shape.labelup, location=location.belowbar, text="BOS", color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
+plotshape(showLabels and bosDown, title="BOS Down", style=shape.labeldown, location=location.abovebar, text="BOS", color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+plotshape(showLabels and volAnomaly, title="Vol Anomaly", style=shape.flag, location=location.abovebar, text="INST", color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+ 
+// Squeeze dots
+plotshape(showSqueezeBar and sqzOnHigh, title="Sqz High", style=shape.circle, location=location.bottom, text="", color=color.new(color.orange, 0), size=size.tiny)
+plotshape(showSqueezeBar and sqzOnMid and not sqzOnHigh, title="Sqz Mid", style=shape.circle, location=location.bottom, text="", color=color.new(color.yellow, 0), size=size.tiny)
+plotshape(showSqueezeBar and sqzOnLow and not sqzOnMid, title="Sqz Low", style=shape.circle, location=location.bottom, text="", color=color.new(color.red, 0), size=size.tiny)
+plotshape(showSqueezeBar and sqzOff, title="Sqz Off", style=shape.circle, location=location.bottom, text="", color=color.new(color.green, 0), size=size.tiny)
+ 
+//==============================
+// 18. INSTITUTIONAL DESK TABLE — all live values
+//==============================
+var table desk = table.new(position.top_right, 2, 24, border_width=1)
+if showSmartTable and barstate.islast
+    row = 0
+    table.cell(desk, 0, row, "SML INST DESK v3", text_color=color.white, bgcolor=color.new(#000000, 0))
+    table.cell(desk, 1, row, syminfo.ticker + " " + timeframe.period, text_color=color.white, bgcolor=color.new(#000000, 0))
+    row += 1
+    table.cell(desk, 0, row, "Bias", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, activeBias, text_color=color.white, bgcolor=f_tableColor(activeBias))
+    row += 1
+    table.cell(desk, 0, row, "Score/Grade", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, f_int(activeScore) + " / " + activeGrade, text_color=color.white, bgcolor=f_tableColor(activeGrade))
+    row += 1
+    table.cell(desk, 0, row, "Regime", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, regime, text_color=color.white, bgcolor=f_tableColor(regime))
+    row += 1
+    // Squeeze
+    sqzDisp = sqzOnHigh ? "TIGHT" : sqzOnMid ? "MID" : sqzOnLow ? "BUILD" : sqzFired ? "FIRED" : "OFF"
+    sqzBg = sqzFired ? color.new(color.lime, 0) : sqzOnHigh ? color.new(color.orange, 0) : sqzOnMid ? color.new(color.yellow, 15) : sqzOnLow ? color.new(color.red, 15) : color.new(color.gray, 40)
+    table.cell(desk, 0, row, "SQUEEZE", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, sqzDisp + " | " + sqzMomStr, text_color=color.white, bgcolor=sqzBg)
+    row += 1
+    // ADX
+    table.cell(desk, 0, row, "ADX", text_color=color.white, bgcolor=color.new(#000000, 25))
+    adxLabel = str.tostring(adxVal, "#.#") + (trendStrong ? " STRONG" : " WEAK")
+    table.cell(desk, 1, row, adxLabel, text_color=color.white, bgcolor=trendStrong ? color.new(color.green, 15) : color.new(color.gray, 30))
+    row += 1
+    // Z-Score
+    table.cell(desk, 0, row, "Z-Score", text_color=color.white, bgcolor=color.new(#000000, 25))
+    zLabel = str.tostring(zScore, "#.##") + (zBullish ? " OVERSOLD" : zBearish ? " OVERBOUGHT" : " FAIR")
+    zBg = zBullish ? color.new(color.green, 15) : zBearish ? color.new(color.red, 15) : color.new(color.gray, 30)
+    table.cell(desk, 1, row, zLabel, text_color=color.white, bgcolor=zBg)
+    row += 1
+    // CMF
+    table.cell(desk, 0, row, "Inst. Flow", text_color=color.white, bgcolor=color.new(#000000, 25))
+    cmfLabel = str.tostring(cmfVal, "#.###") + (cmfBull ? " ACCUM" : cmfBear ? " DISTRIB" : " FLAT")
+    table.cell(desk, 1, row, cmfLabel, text_color=color.white, bgcolor=cmfBull ? color.new(color.green, 15) : cmfBear ? color.new(color.red, 15) : color.new(color.gray, 30))
+    row += 1
+    // Vol Delta
+    table.cell(desk, 0, row, "Vol Delta", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, str.tostring(deltaPct, "#.#") + "%" + (volAnomaly ? " ANOMALY" : ""), text_color=color.white, bgcolor=deltaPct > 20 ? color.new(color.green, 15) : deltaPct < -20 ? color.new(color.red, 15) : color.new(color.gray, 30))
+    row += 1
+    // Rel Strength
+    table.cell(desk, 0, row, "RS vs " + benchTicker, text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, rsBull ? "OUTPERFORM" : rsBear ? "UNDERPERFORM" : "NEUTRAL", text_color=color.white, bgcolor=rsBull ? color.new(color.green, 15) : rsBear ? color.new(color.red, 15) : color.new(color.gray, 30))
+    row += 1
+    // Realized Vol / IV Rank
+    table.cell(desk, 0, row, "RVol / IVR", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, str.tostring(rVol, "#.#") + "% / " + str.tostring(ivRankProxy, "#") + "%", text_color=color.white, bgcolor=ivRankProxy >= 70 ? color.new(color.red, 15) : ivRankProxy <= 30 ? color.new(color.green, 15) : color.new(color.orange, 20))
+    row += 1
+    // Options
+    table.cell(desk, 0, row, "Implied Move", text_color=color.white, bgcolor=color.new(#000000, 0))
+    table.cell(desk, 1, row, "±" + f_num(impliedMove) + " (" + str.tostring(impliedMovePct, "#.#") + "%) " + f_int(optDte) + "DTE", text_color=color.white, bgcolor=color.new(#000000, 0))
+    row += 1
+    table.cell(desk, 0, row, "Options Play", text_color=color.white, bgcolor=color.new(#000000, 0))
+    table.cell(desk, 1, row, str.replace_all(optAction, "_", " "), text_color=color.white, bgcolor=color.new(#000000, 0))
+    row += 1
+    table.cell(desk, 0, row, "Exp Range", text_color=color.white, bgcolor=color.new(#000000, 0))
+    table.cell(desk, 1, row, f_num(optLowerExp) + " — " + f_num(optUpperExp), text_color=color.white, bgcolor=color.new(#000000, 0))
+    row += 1
+    // Fundamentals
+    table.cell(desk, 0, row, "Fundamentals", text_color=color.white, bgcolor=color.new(#000000, 25))
+    fundText = not hasFundamentals ? "N/A (crypto/forex)" : "EPS:" + f_naStr(fundEPS, "#.##") + " PE:" + f_naStr(fundPE, "#.#") + " ROE:" + f_naStr(fundROE, "#.#") + "%"
+    fundBg = not hasFundamentals ? color.new(color.gray, 40) : fundPass ? color.new(color.green, 15) : color.new(color.red, 15)
+    table.cell(desk, 1, row, fundText, text_color=color.white, bgcolor=fundBg)
+    row += 1
+    // Entry/Stop/Targets
+    table.cell(desk, 0, row, "Entry", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, f_num(entry), text_color=color.white, bgcolor=color.new(color.black, 15))
+    row += 1
+    table.cell(desk, 0, row, "Stop", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, f_num(stop), text_color=color.white, bgcolor=color.new(color.red, 15))
+    row += 1
+    table.cell(desk, 0, row, "Targets", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, f_num(t1) + " / " + f_num(t2) + " / " + f_num(t3), text_color=color.white, bgcolor=color.new(color.green, 15))
+    row += 1
+    table.cell(desk, 0, row, "Volume", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, str.tostring(volRatio, "#.##") + "x" + (volAnomaly ? " INSTITUTIONAL" : ""), text_color=color.white, bgcolor=volExpand ? color.new(color.green, 15) : color.new(color.gray, 35))
+    row += 1
+    table.cell(desk, 0, row, "HTF Bias", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, htfBull ? "HTF Bull" : htfBear ? "HTF Bear" : "HTF Mixed", text_color=color.white, bgcolor=htfBull ? color.new(color.green, 15) : htfBear ? color.new(color.red, 15) : color.new(color.orange, 25))
+    row += 1
+    table.cell(desk, 0, row, "Action", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, action, text_color=color.white, bgcolor=action == "AVOID" ? color.new(color.gray, 20) : color.new(color.blue, 15))
+    row += 1
+    table.cell(desk, 0, row, "Corr " + benchTicker, text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, str.tostring(corrVal, "#.##"), text_color=color.white, bgcolor=math.abs(corrVal) > 0.7 ? color.new(color.orange, 15) : color.new(color.gray, 30))
+    row += 1
+    table.cell(desk, 0, row, "Theta/Day", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, f_num(thetaDecayDaily), text_color=color.white, bgcolor=color.new(color.black, 15))
+    row += 1
+    table.cell(desk, 0, row, "Why", text_color=color.white, bgcolor=color.new(#000000, 25))
+    table.cell(desk, 1, row, activeReason, text_color=color.white, bgcolor=color.new(color.black, 15))
