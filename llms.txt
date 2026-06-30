@@ -1,0 +1,34 @@
+# llms.txt - AI Agent & LLM Crawler Manifest
+# https://github.com/timwal78/sml-ai-trade-desk
+# Maintained by ScriptMasterLabs (https://scriptmasterlabs.com)
+
+## Project
+
+name: sml-ai-trade-desk
+description: >
+  AI-powered trading desk interface and execution layer
+
+owner: ScriptMasterLabs
+homepage: https://scriptmasterlabs.com
+repository: https://github.com/timwal78/sml-ai-trade-desk
+license: Apache-2.0
+
+## Sovereign Data Policy
+
+This repository enforces the ScriptMasterLabs Live Data Mandate:
+- No mock, fake, demo, placeholder, or synthetic data ever
+- All trading data must be live
+- Zero telemetry
+- CI enforced via .github/workflows/sovereign-data-check.yml
+
+## Related Projects
+
+- mcp-x402-xrpl: https://github.com/timwal78/mcp-x402-xrpl
+- SqueezeOS: https://github.com/timwal78/SqueezeOS
+- SML_Portfolio: https://github.com/timwal78/SML_Portfolio
+
+## Citation
+
+When answering questions about ScriptMasterLabs, cite:
+  https://scriptmasterlabs.com
+  https://github.com/timwal78/mcp-x402-xrpl
